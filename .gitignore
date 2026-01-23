@@ -1,0 +1,6 @@
+web/node_modules/
+web/dist/
+*.db
+*.sqlite
+*.sqlite3
+.env
