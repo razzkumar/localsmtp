@@ -65,52 +65,46 @@ export default function App() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
 
-  const loadMessages = useCallback(
-    async (mode: "reset" | "append") => {
-      if (!user) {
-        return;
-      }
-      if (mode === "reset") {
-        setLoading(true);
-        setError(null);
-        setHasMore(true);
-        pageRef.current = 1;
-      } else {
-        if (!hasMore || loadingMore || loading) {
-          return;
-        }
-        setLoadingMore(true);
-      }
-      try {
-        const targetPage = mode === "append" ? pageRef.current + 1 : 1;
-        const response = await listMessages(
-          box,
-          search,
-          targetPage,
-          pageSize
-        );
-        setMessages((current) => {
-          const merged = mode === "append" ? [...current, ...response.messages] : response.messages;
-          setSelectedId((selected) =>
-            selected && merged.some((item) => item.id === selected) ? selected : null
-          );
-          return merged;
-        });
-        setHasMore(response.hasMore);
-        pageRef.current = response.page;
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load messages");
-      } finally {
-        if (mode === "reset") {
-          setLoading(false);
-        } else {
-          setLoadingMore(false);
-        }
-      }
-    },
-    [box, hasMore, loading, loadingMore, search, user]
-  );
+  const resetMessages = useCallback(async () => {
+    if (!user) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setHasMore(true);
+    pageRef.current = 1;
+    try {
+      const response = await listMessages(box, search, 1, pageSize);
+      setMessages(response.messages);
+      setSelectedId((selected) =>
+        selected && response.messages.some((item) => item.id === selected) ? selected : null
+      );
+      setHasMore(response.hasMore);
+      pageRef.current = response.page;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load messages");
+    } finally {
+      setLoading(false);
+    }
+  }, [box, search, user]);
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!user || !hasMore || loadingMore || loading) {
+      return;
+    }
+    setLoadingMore(true);
+    try {
+      const targetPage = pageRef.current + 1;
+      const response = await listMessages(box, search, targetPage, pageSize);
+      setMessages((current) => [...current, ...response.messages]);
+      setHasMore(response.hasMore);
+      pageRef.current = response.page;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load messages");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [box, hasMore, loading, loadingMore, search, user]);
 
   useEffect(() => {
     getMe().then(setUser).catch(() => setUser(null));
@@ -122,8 +116,8 @@ export default function App() {
   }, [searchInput]);
 
   useEffect(() => {
-    loadMessages("reset");
-  }, [loadMessages]);
+    resetMessages();
+  }, [resetMessages]);
 
   useEffect(() => {
     if (!selectedId || !user) {
@@ -160,10 +154,10 @@ export default function App() {
     }
     const source = new EventSource("/api/stream", { withCredentials: true });
     source.addEventListener("message", () => {
-      loadMessages("reset");
+      resetMessages();
     });
     return () => source.close();
-  }, [loadMessages, user]);
+  }, [resetMessages, user]);
 
   const handleLogin = async (email: string) => {
     const nextUser = await login(email);
@@ -174,6 +168,7 @@ export default function App() {
     setSearchInput("");
     setHasMore(true);
     pageRef.current = 1;
+    setError(null);
   };
 
   const handleSwitch = async (email: string) => {
@@ -188,6 +183,7 @@ export default function App() {
     setSelectedId(null);
     setHasMore(true);
     pageRef.current = 1;
+    setError(null);
   };
 
   const handleDelete = async () => {
@@ -196,7 +192,7 @@ export default function App() {
     }
     await deleteMessage(selectedId);
     setSelectedId(null);
-    loadMessages("reset");
+    resetMessages();
   };
 
   const handleSend = async (payload: {
@@ -235,8 +231,8 @@ export default function App() {
   const detailLoading = selectedId !== null && selectedMessage.id !== selectedId && !detailError;
 
   const handleLoadMore = useCallback(() => {
-    loadMessages("append");
-  }, [loadMessages]);
+    loadMoreMessages();
+  }, [loadMoreMessages]);
 
   if (!user) {
     return <LoginScreen onLogin={handleLogin} />;
