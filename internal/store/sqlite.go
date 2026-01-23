@@ -16,7 +16,11 @@ type Store struct {
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		trimmed = "file:localsmtp?mode=memory&cache=shared"
+	}
+	db, err := sql.Open("sqlite", trimmed)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

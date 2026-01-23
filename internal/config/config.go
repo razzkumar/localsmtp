@@ -15,9 +15,9 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		HTTPPort:   getEnvInt("HTTP_PORT", 8125),
-		SMTPPort:   getEnvInt("SMTP_PORT", 8225),
-		DBPath:     getEnvString("DB_PATH", "localsmtp.db"),
+		HTTPPort:   getEnvInt("HTTP_PORT", 3025),
+		SMTPPort:   getEnvInt("SMTP_PORT", 2025),
+		DBPath:     getEnvString("DB_PATH", ""),
 		AuthSecret: getEnvString("AUTH_SECRET", ""),
 	}
 }
