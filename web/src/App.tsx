@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  FixedSizeList as List,
-  type FixedSizeList,
-  type ListChildComponentProps,
-  type ListOnItemsRenderedProps,
-} from "react-window";
-import {
   deleteMessage,
   getMessage,
   getMe,
@@ -51,7 +45,6 @@ const emptyMessage: MessageDetail = {
 };
 
 const pageSize = 10;
-const rowHeight = 108;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -67,13 +60,10 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const pageRef = useRef(1);
   const [composeOpen, setComposeOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
-  const listViewportRef = useRef<HTMLDivElement | null>(null);
-  const [listSize, setListSize] = useState({ height: 0, width: 0 });
-  const listRef = useRef<FixedSizeList>(null);
 
   const loadMessages = useCallback(
     async (mode: "reset" | "append") => {
@@ -83,8 +73,8 @@ export default function App() {
       if (mode === "reset") {
         setLoading(true);
         setError(null);
-        setCursor(null);
         setHasMore(true);
+        pageRef.current = 1;
       } else {
         if (!hasMore || loadingMore || loading) {
           return;
@@ -92,10 +82,11 @@ export default function App() {
         setLoadingMore(true);
       }
       try {
+        const targetPage = mode === "append" ? pageRef.current + 1 : 1;
         const response = await listMessages(
           box,
           search,
-          mode === "append" ? cursor : null,
+          targetPage,
           pageSize
         );
         setMessages((current) => {
@@ -105,11 +96,8 @@ export default function App() {
           );
           return merged;
         });
-        setCursor(response.nextCursor || null);
         setHasMore(response.hasMore);
-        if (mode === "reset") {
-          listRef.current?.scrollTo(0);
-        }
+        pageRef.current = response.page;
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load messages");
@@ -121,7 +109,7 @@ export default function App() {
         }
       }
     },
-    [box, cursor, hasMore, loading, loadingMore, search, user]
+    [box, hasMore, loading, loadingMore, search, user]
   );
 
   useEffect(() => {
@@ -132,20 +120,6 @@ export default function App() {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
-
-  useEffect(() => {
-    const element = listViewportRef.current;
-    if (!element) {
-      return;
-    }
-    const updateSize = () => {
-      setListSize({ height: element.clientHeight, width: element.clientWidth });
-    };
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     loadMessages("reset");
@@ -198,8 +172,8 @@ export default function App() {
     setMessages([]);
     setSelectedId(null);
     setSearchInput("");
-    setCursor(null);
     setHasMore(true);
+    pageRef.current = 1;
   };
 
   const handleSwitch = async (email: string) => {
@@ -212,8 +186,8 @@ export default function App() {
     setUser(null);
     setMessages([]);
     setSelectedId(null);
-    setCursor(null);
     setHasMore(true);
+    pageRef.current = 1;
   };
 
   const handleDelete = async () => {
@@ -260,30 +234,9 @@ export default function App() {
 
   const detailLoading = selectedId !== null && selectedMessage.id !== selectedId && !detailError;
 
-  const rowData = useMemo(
-    () => ({
-      messages,
-      selectedId,
-      box,
-      hasMore,
-      loadingMore,
-      formatDate,
-      onSelect: (id: string) => setSelectedId(id),
-    }),
-    [messages, selectedId, box, hasMore, loadingMore, formatDate]
-  );
-
-  const handleItemsRendered = useCallback(
-    (info: ListOnItemsRenderedProps) => {
-      if (!hasMore || loading || loadingMore) {
-        return;
-      }
-      if (info.visibleStopIndex >= messages.length - 2) {
-        loadMessages("append");
-      }
-    },
-    [hasMore, loading, loadingMore, loadMessages, messages.length]
-  );
+  const handleLoadMore = useCallback(() => {
+    loadMessages("append");
+  }, [loadMessages]);
 
   if (!user) {
     return <LoginScreen onLogin={handleLogin} />;
@@ -339,31 +292,57 @@ export default function App() {
               />
             </div>
             <div className="panel-body">
-              <div className="list-viewport" ref={listViewportRef}>
-                {loading && messages.length === 0 ? (
-                  <div className="state">Loading messages...</div>
-                ) : null}
-                {!loading && messages.length === 0 ? (
-                  <div className="state">
-                    <p>No messages yet.</p>
-                    <p>Send mail to any address and it will appear here.</p>
-                  </div>
-                ) : null}
-                {messages.length > 0 && listSize.height > 0 && listSize.width > 0 ? (
-                  <List
-                    ref={listRef}
-                    height={listSize.height}
-                    width={listSize.width}
-                    itemCount={hasMore ? messages.length + 1 : messages.length}
-                    itemSize={rowHeight}
-                    itemData={rowData}
-                    onItemsRendered={handleItemsRendered}
-                    itemKey={(index, data) => data.messages[index]?.id ?? `loader-${index}`}
-                  >
-                    {MessageRow}
-                  </List>
-                ) : null}
-              </div>
+              {loading && messages.length === 0 ? (
+                <div className="state">Loading messages...</div>
+              ) : null}
+              {!loading && messages.length === 0 ? (
+                <div className="state">
+                  <p>No messages yet.</p>
+                  <p>Send mail to any address and it will appear here.</p>
+                </div>
+              ) : null}
+              {messages.length > 0 ? (
+                <div className="message-scroll">
+                  <ul className="message-list">
+                    {messages.map((message, index) => {
+                      const label =
+                        box === "inbox" ? message.from : message.to.join(", ") || "No recipients";
+                      return (
+                        <li key={message.id}>
+                          <button
+                            className={`message-item ${selectedId === message.id ? "selected" : ""}`}
+                            onClick={() => setSelectedId(message.id)}
+                            style={{ animationDelay: `${index * 40}ms` }}
+                          >
+                            <div className="message-title">
+                              <span>{label}</span>
+                              {message.hasAttachments && <span className="tag">Attachments</span>}
+                            </div>
+                            <div className="message-subject">{message.subject || "(No subject)"}</div>
+                            <div className="message-meta">{formatDate(message.createdAt)}</div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+              {messages.length > 0 ? (
+                <div className="load-more">
+                  {hasMore ? (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={handleLoadMore}
+                      disabled={loadingMore}
+                    >
+                      {loadingMore ? "Loading..." : "Load more"}
+                    </button>
+                  ) : (
+                    <span>End of list</span>
+                  )}
+                </div>
+              ) : null}
               {error && <div className="state error">{error}</div>}
             </div>
           </aside>
@@ -505,53 +484,6 @@ export default function App() {
   );
 }
 
-type RowData = {
-  messages: MessageSummary[];
-  selectedId: string | null;
-  box: Box;
-  hasMore: boolean;
-  loadingMore: boolean;
-  formatDate: (value: string) => string;
-  onSelect: (id: string) => void;
-};
-
-function MessageRow({
-  index,
-  style,
-  data,
-}: ListChildComponentProps<RowData>) {
-  if (index >= data.messages.length) {
-    return (
-      <div style={style} className="list-row">
-        <div className="list-footer">
-          {data.loadingMore ? "Loading more..." : "Scroll to load more"}
-        </div>
-      </div>
-    );
-  }
-
-  const message = data.messages[index];
-  const label =
-    data.box === "inbox"
-      ? message.from
-      : message.to.join(", ") || "No recipients";
-
-  return (
-    <div style={style} className="list-row">
-      <button
-        className={`message-item ${data.selectedId === message.id ? "selected" : ""}`}
-        onClick={() => data.onSelect(message.id)}
-      >
-        <div className="message-title">
-          <span>{label}</span>
-          {message.hasAttachments && <span className="tag">Attachments</span>}
-        </div>
-        <div className="message-subject">{message.subject || "(No subject)"}</div>
-        <div className="message-meta">{data.formatDate(message.createdAt)}</div>
-      </button>
-    </div>
-  );
-}
 
 function defaultTab(message: MessageDetail): ViewMode {
   if (message.html) {

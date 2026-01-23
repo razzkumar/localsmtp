@@ -6,8 +6,8 @@ import (
 )
 
 func main() {
-	from := "receiver@infrasutra.com"
-	to := "sender@infrasutra.com"
+	from := "sender@infrasutra.com"
+	to := "receiver@infrasutra.com"
 
 	for i := 1; i <= 1000; i++ {
 		subject := fmt.Sprintf("LocalSMTP Example #%d", i)

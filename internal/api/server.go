@@ -19,6 +19,7 @@ import (
 
 	"github.io/infrasutra/localsmtp/internal/auth"
 	"github.io/infrasutra/localsmtp/internal/config"
+	"github.io/infrasutra/localsmtp/internal/pagination"
 	"github.io/infrasutra/localsmtp/internal/sse"
 	"github.io/infrasutra/localsmtp/internal/store"
 	webassets "github.io/infrasutra/localsmtp/web"
@@ -229,34 +230,41 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	limit := 10
-	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
-		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 100 {
-				parsed = 100
-			}
-			limit = parsed
-		}
-	}
-	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
-	messages, nextCursor, err := s.store.ListMessages(r.Context(), email, box, search, cursor, limit)
+	params := pagination.GetPaginationParams(r.URL.Query())
+	messages, total, err := s.store.ListMessages(
+		r.Context(),
+		email,
+		box,
+		search,
+		params.Sort,
+		params.Offset,
+		params.Limit,
+	)
 	if err != nil {
-		if errors.Is(err, store.ErrInvalidCursor) {
-			http.Error(w, "invalid cursor", http.StatusBadRequest)
-			return
-		}
 		http.Error(w, "unable to list messages", http.StatusInternalServerError)
 		return
 	}
 
+	hasMore := pagination.GetHasNext(params.Offset, params.Limit, total)
+	nextPage := int32(0)
+	if hasMore {
+		nextPage = params.Page + 1
+	}
+
 	response := struct {
-		Messages   []messageSummary `json:"messages"`
-		NextCursor string           `json:"nextCursor"`
-		HasMore    bool             `json:"hasMore"`
+		Messages []messageSummary `json:"messages"`
+		Page     int32            `json:"page"`
+		Limit    int32            `json:"limit"`
+		Total    int32            `json:"total"`
+		HasMore  bool             `json:"hasMore"`
+		NextPage int32            `json:"nextPage"`
 	}{
-		Messages:   make([]messageSummary, 0, len(messages)),
-		NextCursor: nextCursor,
-		HasMore:    nextCursor != "",
+		Messages: make([]messageSummary, 0, len(messages)),
+		Page:     params.Page,
+		Limit:    params.Limit,
+		Total:    total,
+		HasMore:  hasMore,
+		NextPage: nextPage,
 	}
 	for _, msg := range messages {
 		response.Messages = append(response.Messages, toSummary(msg))

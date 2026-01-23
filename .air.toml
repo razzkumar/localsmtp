@@ -1,0 +1,24 @@
+# Air configuration for LocalSMTP
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/localsmtp ./cmd/localsmtp"
+  bin = "./tmp/localsmtp"
+  include_ext = ["go", "tpl", "tmpl", "html", "css", "js", "ts", "tsx", "json"]
+  exclude_dir = ["tmp", "web/node_modules", "web/src", "vendor"]
+  exclude_file = ["go.sum"]
+  delay = 500
+
+[log]
+  time = true
+
+[color]
+  main = "yellow"
+  watcher = "cyan"
+  build = "green"
+  runner = "magenta"
+
+[misc]
+  clean_on_exit = true

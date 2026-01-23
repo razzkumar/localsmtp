@@ -229,12 +229,6 @@ textarea {
   gap: 12px;
 }
 
-.list-viewport {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-}
-
 .state {
   padding: 20px;
   color: var(--ink-soft);
@@ -246,17 +240,28 @@ textarea {
 }
 
 
-.list-row {
-  padding: 6px 0;
+.message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.list-footer {
-  width: 100%;
-  text-align: center;
+.message-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
   color: var(--ink-soft);
   font-size: 13px;
-  padding: 12px;
 }
 
 .message-item {

@@ -2,8 +2,11 @@ import type { MessageDetail, MessageSummary, User } from "./types";
 
 type MessageListResponse = {
   messages: MessageSummary[];
-  nextCursor: string;
+  page: number;
+  limit: number;
+  total: number;
   hasMore: boolean;
+  nextPage: number;
 };
 
 const headers = {
@@ -48,7 +51,7 @@ export async function logout(): Promise<void> {
 export async function listMessages(
   box: string,
   search: string,
-  cursor: string | null,
+  page: number,
   limit: number
 ): Promise<MessageListResponse> {
   const params = new URLSearchParams();
@@ -56,9 +59,7 @@ export async function listMessages(
   if (search) {
     params.set("search", search);
   }
-  if (cursor) {
-    params.set("cursor", cursor);
-  }
+  params.set("page", String(page));
   params.set("limit", String(limit));
   return request<MessageListResponse>(`/api/messages?${params.toString()}`);
 }
