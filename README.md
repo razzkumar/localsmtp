@@ -4,7 +4,7 @@ LocalSMTP is a modern SMTP capture tool for easy test. It provides a Go 1.25 bac
 
 ## Features
 
-- SMTP capture server on port 1025
+- SMTP capture server on port 2025
 - Email-only login (no password, any address)
 - Per-user inbox + sent views
 - Real-time updates via Server-Sent Events
@@ -46,7 +46,7 @@ Then run the Go server. It embeds `web/dist` into the binary.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HTTP_PORT` | `8025` | HTTP server port |
-| `SMTP_PORT` | `1025` | SMTP server port |
+| `HTTP_PORT` | `3025` | HTTP server port |
+| `SMTP_PORT` | `2025` | SMTP server port |
 | `DB_PATH` | empty (in-memory) | SQLite database path (set for persistence) |
 | `AUTH_SECRET` | empty | Session signing secret (recommended in production) |

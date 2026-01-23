@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 type Store struct {
 	db *sql.DB
 }
+
+var ErrInvalidCursor = errors.New("invalid cursor")
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	trimmed := strings.TrimSpace(path)
@@ -73,9 +76,12 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
             FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
         );`,
 		`CREATE INDEX IF NOT EXISTS idx_recipients_email ON recipients(email);`,
+		`CREATE INDEX IF NOT EXISTS idx_recipients_email_message ON recipients(email, message_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_recipients_message ON recipients(message_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_email);`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_from_created ON messages(from_email, created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_created_id ON messages(created_at, id);`,
 	}
 
 	for _, statement := range statements {
@@ -149,14 +155,14 @@ func (s *Store) InsertMessage(ctx context.Context, message Message, recipients [
 	return nil
 }
 
-func (s *Store) ListMessages(ctx context.Context, email, box, search string, limit int) ([]MessageSummary, error) {
+func (s *Store) ListMessages(ctx context.Context, email, box, search, cursor string, limit int) ([]MessageSummary, string, error) {
 	if limit <= 0 {
-		limit = 200
+		limit = 10
 	}
 
-	query := `SELECT m.id, m.from_email, m.subject, m.text_body, m.html_body, m.created_at,
-        EXISTS(SELECT 1 FROM attachments a WHERE a.message_id = m.id) as has_attachments
-        FROM messages m`
+	query := `SELECT m.id, m.from_email, m.subject, m.created_at,
+		EXISTS(SELECT 1 FROM attachments a WHERE a.message_id = m.id) as has_attachments
+		FROM messages m`
 	args := []any{}
 
 	switch box {
@@ -175,12 +181,21 @@ func (s *Store) ListMessages(ctx context.Context, email, box, search string, lim
 		args = append(args, term, term, term)
 	}
 
-	query += " ORDER BY m.created_at DESC LIMIT ?"
-	args = append(args, limit)
+	if cursor != "" {
+		createdAt, messageID, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		query += " AND (m.created_at < ? OR (m.created_at = ? AND m.id < ?))"
+		args = append(args, createdAt, createdAt, messageID)
+	}
+
+	query += " ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
+	args = append(args, limit+1)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list messages: %w", err)
+		return nil, "", fmt.Errorf("list messages: %w", err)
 	}
 	defer rows.Close()
 
@@ -193,33 +208,39 @@ func (s *Store) ListMessages(ctx context.Context, email, box, search string, lim
 			&summary.ID,
 			&summary.From,
 			&summary.Subject,
-			&summary.TextBody,
-			&summary.HTMLBody,
 			&createdAt,
 			&summary.HasAttachments,
 		); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
+			return nil, "", fmt.Errorf("scan message: %w", err)
 		}
 		summary.CreatedAt = time.Unix(createdAt, 0)
 		messages = append(messages, summary)
 		ids = append(ids, summary.ID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list messages: %w", err)
+		return nil, "", fmt.Errorf("list messages: %w", err)
+	}
+
+	var nextCursor string
+	if len(messages) > limit {
+		last := messages[limit-1]
+		nextCursor = encodeCursor(last.CreatedAt.Unix(), last.ID)
+		messages = messages[:limit]
+		ids = ids[:limit]
 	}
 
 	if len(ids) == 0 {
-		return messages, nil
+		return messages, nextCursor, nil
 	}
 
 	recipients, err := s.listRecipients(ctx, ids)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for i := range messages {
 		messages[i].RecipientGroups = recipients[messages[i].ID]
 	}
-	return messages, nil
+	return messages, nextCursor, nil
 }
 
 func (s *Store) GetMessage(ctx context.Context, email, id string) (Message, []Recipient, []Attachment, error) {
@@ -371,4 +392,24 @@ func (s *Store) listRecipients(ctx context.Context, messageIDs []string) (map[st
 		return nil, fmt.Errorf("list recipients: %w", err)
 	}
 	return result, nil
+}
+
+func encodeCursor(createdAt int64, messageID string) string {
+	return fmt.Sprintf("%d:%s", createdAt, messageID)
+}
+
+func decodeCursor(cursor string) (int64, string, error) {
+	parts := strings.SplitN(cursor, ":", 2)
+	if len(parts) != 2 {
+		return 0, "", ErrInvalidCursor
+	}
+	createdAt, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, "", ErrInvalidCursor
+	}
+	messageID := strings.TrimSpace(parts[1])
+	if messageID == "" {
+		return 0, "", ErrInvalidCursor
+	}
+	return createdAt, messageID, nil
 }

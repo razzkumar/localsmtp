@@ -37,8 +37,6 @@ type MessageSummary struct {
 	ID              string
 	From            string
 	Subject         string
-	TextBody        string
-	HTMLBody        string
 	CreatedAt       time.Time
 	HasAttachments  bool
 	RecipientGroups map[string][]string

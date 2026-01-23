@@ -2,6 +2,8 @@ import type { MessageDetail, MessageSummary, User } from "./types";
 
 type MessageListResponse = {
   messages: MessageSummary[];
+  nextCursor: string;
+  hasMore: boolean;
 };
 
 const headers = {
@@ -43,14 +45,22 @@ export async function logout(): Promise<void> {
   await request<void>("/api/logout", { method: "POST" });
 }
 
-export async function listMessages(box: string, search: string): Promise<MessageSummary[]> {
+export async function listMessages(
+  box: string,
+  search: string,
+  cursor: string | null,
+  limit: number
+): Promise<MessageListResponse> {
   const params = new URLSearchParams();
   params.set("box", box);
   if (search) {
     params.set("search", search);
   }
-  const data = await request<MessageListResponse>(`/api/messages?${params.toString()}`);
-  return data.messages;
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  params.set("limit", String(limit));
+  return request<MessageListResponse>(`/api/messages?${params.toString()}`);
 }
 
 export async function getMessage(id: string): Promise<MessageDetail> {

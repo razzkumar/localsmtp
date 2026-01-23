@@ -229,24 +229,35 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	limit := 200
+	limit := 10
 	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
 		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
-			if parsed > 500 {
-				parsed = 500
+			if parsed > 100 {
+				parsed = 100
 			}
 			limit = parsed
 		}
 	}
-	messages, err := s.store.ListMessages(r.Context(), email, box, search, limit)
+	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	messages, nextCursor, err := s.store.ListMessages(r.Context(), email, box, search, cursor, limit)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "unable to list messages", http.StatusInternalServerError)
 		return
 	}
 
 	response := struct {
-		Messages []messageSummary `json:"messages"`
-	}{Messages: make([]messageSummary, 0, len(messages))}
+		Messages   []messageSummary `json:"messages"`
+		NextCursor string           `json:"nextCursor"`
+		HasMore    bool             `json:"hasMore"`
+	}{
+		Messages:   make([]messageSummary, 0, len(messages)),
+		NextCursor: nextCursor,
+		HasMore:    nextCursor != "",
+	}
 	for _, msg := range messages {
 		response.Messages = append(response.Messages, toSummary(msg))
 	}
@@ -535,7 +546,6 @@ type messageSummary struct {
 	From           string   `json:"from"`
 	To             []string `json:"to"`
 	Subject        string   `json:"subject"`
-	Preview        string   `json:"preview"`
 	CreatedAt      string   `json:"createdAt"`
 	HasAttachments bool     `json:"hasAttachments"`
 }
@@ -573,47 +583,14 @@ func toSummary(msg store.MessageSummary) messageSummary {
 	if msg.RecipientGroups != nil {
 		toList = append(toList, msg.RecipientGroups["to"]...)
 	}
-	preview := buildPreview(msg.TextBody, msg.HTMLBody)
 	return messageSummary{
 		ID:             msg.ID,
 		From:           msg.From,
 		To:             toList,
 		Subject:        msg.Subject,
-		Preview:        preview,
 		CreatedAt:      msg.CreatedAt.UTC().Format(time.RFC3339),
 		HasAttachments: msg.HasAttachments,
 	}
-}
-
-func buildPreview(textBody, htmlBody string) string {
-	candidate := strings.TrimSpace(textBody)
-	if candidate == "" {
-		candidate = stripHTML(htmlBody)
-	}
-	candidate = strings.ReplaceAll(candidate, "\n", " ")
-	candidate = strings.Join(strings.Fields(candidate), " ")
-	if len(candidate) > 160 {
-		return candidate[:160] + "..."
-	}
-	return candidate
-}
-
-func stripHTML(input string) string {
-	out := []rune{}
-	inTag := false
-	for _, r := range input {
-		switch r {
-		case '<':
-			inTag = true
-		case '>':
-			inTag = false
-		default:
-			if !inTag {
-				out = append(out, r)
-			}
-		}
-	}
-	return string(out)
 }
 
 func normalizeRecipients(recipients []string) []string {
@@ -635,9 +612,15 @@ func normalizeRecipients(recipients []string) []string {
 
 func buildOutboundMessage(from string, to []string, subject, textBody, htmlBody string) []byte {
 	boundary := fmt.Sprintf("localsmtp-%d", time.Now().UnixNano())
+	from = sanitizeHeader(from)
+	subject = sanitizeHeader(subject)
+	cleanTo := make([]string, 0, len(to))
+	for _, recipient := range to {
+		cleanTo = append(cleanTo, sanitizeHeader(recipient))
+	}
 	headers := []string{
 		fmt.Sprintf("From: %s", from),
-		fmt.Sprintf("To: %s", strings.Join(to, ", ")),
+		fmt.Sprintf("To: %s", strings.Join(cleanTo, ", ")),
 		fmt.Sprintf("Subject: %s", subject),
 		fmt.Sprintf("Date: %s", time.Now().Format(time.RFC1123Z)),
 		"MIME-Version: 1.0",
@@ -669,4 +652,10 @@ func buildOutboundMessage(from string, to []string, subject, textBody, htmlBody 
 	}
 	headers = append(headers, fmt.Sprintf("Content-Type: %s; charset=utf-8", contentType))
 	return []byte(strings.Join(append(headers, "", body, ""), "\r\n"))
+}
+
+func sanitizeHeader(value string) string {
+	cleaned := strings.ReplaceAll(value, "\r", "")
+	cleaned = strings.ReplaceAll(cleaned, "\n", "")
+	return strings.TrimSpace(cleaned)
 }

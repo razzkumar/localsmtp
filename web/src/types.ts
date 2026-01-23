@@ -7,7 +7,6 @@ export type MessageSummary = {
   from: string;
   to: string[];
   subject: string;
-  preview: string;
   createdAt: string;
   hasAttachments: boolean;
 };
