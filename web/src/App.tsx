@@ -45,6 +45,7 @@ const emptyMessage: MessageDetail = {
 };
 
 const pageSize = 10;
+const smoothScrollOffset = 180;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -62,6 +63,8 @@ export default function App() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const pageRef = useRef(1);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollRef = useRef(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
 
@@ -73,6 +76,7 @@ export default function App() {
     setError(null);
     setHasMore(true);
     pageRef.current = 1;
+    shouldScrollRef.current = false;
     try {
       const response = await listMessages(box, search, 1, pageSize);
       setMessages(response.messages);
@@ -99,6 +103,7 @@ export default function App() {
       setMessages((current) => [...current, ...response.messages]);
       setHasMore(response.hasMore);
       pageRef.current = response.page;
+      shouldScrollRef.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load messages");
     } finally {
@@ -118,6 +123,14 @@ export default function App() {
   useEffect(() => {
     resetMessages();
   }, [resetMessages]);
+
+  useEffect(() => {
+    if (!shouldScrollRef.current) {
+      return;
+    }
+    shouldScrollRef.current = false;
+    scrollRef.current?.scrollBy({ top: smoothScrollOffset, behavior: "smooth" });
+  }, [messages.length]);
 
   useEffect(() => {
     if (!selectedId || !user) {
@@ -168,6 +181,7 @@ export default function App() {
     setSearchInput("");
     setHasMore(true);
     pageRef.current = 1;
+    shouldScrollRef.current = false;
     setError(null);
   };
 
@@ -298,7 +312,7 @@ export default function App() {
                 </div>
               ) : null}
               {messages.length > 0 ? (
-                <div className="message-scroll">
+                <div className="message-scroll" ref={scrollRef}>
                   <ul className="message-list">
                     {messages.map((message, index) => {
                       const label =

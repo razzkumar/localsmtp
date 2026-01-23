@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.io/infrasutra/localsmtp/internal/api"
 	"github.io/infrasutra/localsmtp/internal/auth"
 	"github.io/infrasutra/localsmtp/internal/config"
@@ -20,6 +22,7 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load()
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 

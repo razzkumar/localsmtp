@@ -50,3 +50,5 @@ Then run the Go server. It embeds `web/dist` into the binary.
 | `SMTP_PORT` | `2025` | SMTP server port |
 | `DB_PATH` | empty (in-memory) | SQLite database path (set for persistence) |
 | `AUTH_SECRET` | empty | Session signing secret (recommended in production) |
+
+LocalSMTP loads a `.env` file automatically when present.
