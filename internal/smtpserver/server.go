@@ -14,8 +14,8 @@ import (
 	"github.com/emersion/go-smtp"
 	"github.com/google/uuid"
 
-	"github.io/infrasutra/localsmtp/internal/sse"
-	"github.io/infrasutra/localsmtp/internal/store"
+	"github.io/razzkumar/localsmtp/internal/sse"
+	"github.io/razzkumar/localsmtp/internal/store"
 )
 
 const (

@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.io/infrasutra/localsmtp/internal/auth"
-	"github.io/infrasutra/localsmtp/internal/config"
-	"github.io/infrasutra/localsmtp/internal/pagination"
-	"github.io/infrasutra/localsmtp/internal/sse"
-	"github.io/infrasutra/localsmtp/internal/store"
-	webassets "github.io/infrasutra/localsmtp/web"
+	"github.io/razzkumar/localsmtp/internal/auth"
+	"github.io/razzkumar/localsmtp/internal/config"
+	"github.io/razzkumar/localsmtp/internal/pagination"
+	"github.io/razzkumar/localsmtp/internal/sse"
+	"github.io/razzkumar/localsmtp/internal/store"
+	webassets "github.io/razzkumar/localsmtp/web"
 )
 
 type Server struct {

@@ -17,8 +17,13 @@ type Store struct {
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	trimmed := strings.TrimSpace(path)
+	inMemory := false
 	if trimmed == "" {
-		trimmed = "file:localsmtp?mode=memory&cache=shared"
+		trimmed = ":memory:"
+		inMemory = true
+	}
+	if strings.Contains(trimmed, "mode=memory") || trimmed == ":memory:" || trimmed == "file::memory:" {
+		inMemory = true
 	}
 	db, err := sql.Open("sqlite", trimmed)
 	if err != nil {
@@ -29,8 +34,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON;"); err != nil {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL;"); err != nil {
-		return nil, fmt.Errorf("enable WAL: %w", err)
+	if !inMemory {
+		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL;"); err != nil {
+			return nil, fmt.Errorf("enable WAL: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }

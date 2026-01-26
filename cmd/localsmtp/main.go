@@ -13,12 +13,12 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.io/infrasutra/localsmtp/internal/api"
-	"github.io/infrasutra/localsmtp/internal/auth"
-	"github.io/infrasutra/localsmtp/internal/config"
-	"github.io/infrasutra/localsmtp/internal/smtpserver"
-	"github.io/infrasutra/localsmtp/internal/sse"
-	"github.io/infrasutra/localsmtp/internal/store"
+	"github.io/razzkumar/localsmtp/internal/api"
+	"github.io/razzkumar/localsmtp/internal/auth"
+	"github.io/razzkumar/localsmtp/internal/config"
+	"github.io/razzkumar/localsmtp/internal/smtpserver"
+	"github.io/razzkumar/localsmtp/internal/sse"
+	"github.io/razzkumar/localsmtp/internal/store"
 )
 
 func main() {
