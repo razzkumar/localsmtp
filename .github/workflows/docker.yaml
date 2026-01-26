@@ -2,11 +2,8 @@ name: LocalSMTP Docker Image Build
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "Dockerfile"
-      - ".github/workflows/docker.yaml"
+    tags:
+      - "*"
 
 env:
   CONTEXT_PATH: .
@@ -41,6 +38,7 @@ jobs:
             ${{ env.DOCKER_IMAGE }}
           tags: |
             type=raw,value=latest
+            type=semver,pattern={{version}}
 
       - name: Build and push (amd64)
         uses: docker/build-push-action@v6
