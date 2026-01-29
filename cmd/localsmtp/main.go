@@ -51,8 +51,19 @@ func main() {
 	hub := sse.NewHub()
 	apiServer := api.NewServer(cfg, db, authManager, hub, logger)
 
+	smtpAuthCfg := smtpserver.AuthConfig{
+		Enabled:  cfg.SMTPAuthEnabled,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword,
+	}
+	if smtpAuthCfg.Enabled {
+		logger.Info("smtp auth enabled", "username", smtpAuthCfg.Username, "password", smtpAuthCfg.Password)
+	} else {
+		logger.Warn("smtp auth disabled; server accepts unauthenticated connections")
+	}
+
 	smtpAddr := fmt.Sprintf(":%d", cfg.SMTPPort)
-	smtpSrv := smtpserver.New(db, hub, logger, smtpAddr)
+	smtpSrv := smtpserver.New(db, hub, logger, smtpAddr, smtpAuthCfg)
 
 	httpAddr := fmt.Sprintf(":%d", cfg.HTTPPort)
 	httpSrv := &http.Server{

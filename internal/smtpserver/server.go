@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-message/mail"
+	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
 	"github.com/google/uuid"
 
@@ -22,13 +24,26 @@ const (
 	defaultDomain = "localsmtp"
 )
 
+type AuthConfig struct {
+	Enabled  bool
+	Username string
+	Password string
+}
+
 type Server struct {
 	smtp   *smtp.Server
 	logger *slog.Logger
 }
 
-func New(store *store.Store, hub *sse.Hub, logger *slog.Logger, addr string) *Server {
-	backend := &backend{store: store, hub: hub, logger: logger}
+func New(store *store.Store, hub *sse.Hub, logger *slog.Logger, addr string, authCfg AuthConfig) *Server {
+	backend := &backend{
+		store:        store,
+		hub:          hub,
+		logger:       logger,
+		authEnabled:  authCfg.Enabled,
+		authUsername: authCfg.Username,
+		authPassword: authCfg.Password,
+	}
 	server := smtp.NewServer(backend)
 	server.Addr = addr
 	server.Domain = defaultDomain
@@ -51,9 +66,12 @@ func (s *Server) Close() error {
 }
 
 type backend struct {
-	store  *store.Store
-	hub    *sse.Hub
-	logger *slog.Logger
+	store        *store.Store
+	hub          *sse.Hub
+	logger       *slog.Logger
+	authEnabled  bool
+	authUsername string
+	authPassword string
 }
 
 func (b *backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
@@ -61,17 +79,47 @@ func (b *backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
 }
 
 type session struct {
-	backend *backend
-	from    string
-	to      []string
+	backend       *backend
+	from          string
+	to            []string
+	authenticated bool
+}
+
+func (s *session) AuthMechanisms() []string {
+	if s.backend.authEnabled {
+		return []string{sasl.Plain}
+	}
+	return nil
+}
+
+func (s *session) Auth(mech string) (sasl.Server, error) {
+	if !s.backend.authEnabled {
+		return nil, errors.New("authentication not enabled")
+	}
+	if mech != sasl.Plain {
+		return nil, errors.New("unsupported authentication mechanism")
+	}
+	return sasl.NewPlainServer(func(identity, username, password string) error {
+		if username == s.backend.authUsername && password == s.backend.authPassword {
+			s.authenticated = true
+			return nil
+		}
+		return errors.New("invalid credentials")
+	}), nil
 }
 
 func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+	if s.backend.authEnabled && !s.authenticated {
+		return smtp.ErrAuthRequired
+	}
 	s.from = normalizeEmail(from)
 	return nil
 }
 
 func (s *session) Rcpt(to string, _ *smtp.RcptOptions) error {
+	if s.backend.authEnabled && !s.authenticated {
+		return smtp.ErrAuthRequired
+	}
 	s.to = append(s.to, normalizeEmail(to))
 	return nil
 }
