@@ -79,6 +79,13 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
             size INTEGER NOT NULL,
             FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
         );`,
+		`CREATE TABLE IF NOT EXISTS message_reads (
+            message_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            read_at INTEGER NOT NULL,
+            PRIMARY KEY (message_id, email),
+            FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+        );`,
 		`CREATE INDEX IF NOT EXISTS idx_recipients_email ON recipients(email);`,
 		`CREATE INDEX IF NOT EXISTS idx_recipients_email_message ON recipients(email, message_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_recipients_message ON recipients(message_id);`,
@@ -86,6 +93,7 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_from_created ON messages(from_email, created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created_id ON messages(created_at, id);`,
+		`CREATE INDEX IF NOT EXISTS idx_message_reads_email ON message_reads(email);`,
 	}
 
 	for _, statement := range statements {
@@ -157,6 +165,41 @@ func (s *Store) InsertMessage(ctx context.Context, message Message, recipients [
 		return fmt.Errorf("commit message: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) MarkMessageRead(ctx context.Context, email, messageID string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO message_reads (message_id, email, read_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(message_id, email) DO UPDATE SET read_at = excluded.read_at;`,
+		messageID, email, now.Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("mark message read: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UnreadCounts(ctx context.Context, emails []string) (map[string]int32, error) {
+	counts := make(map[string]int32, len(emails))
+	for _, email := range emails {
+		var total int64
+		err := s.db.QueryRowContext(ctx, `SELECT COUNT(1)
+            FROM messages m
+            WHERE EXISTS (SELECT 1 FROM recipients r WHERE r.message_id = m.id AND r.email = ?)
+              AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.email = ?);`,
+			email, email).Scan(&total)
+		if err != nil {
+			return nil, fmt.Errorf("count unread: %w", err)
+		}
+		if total < 0 {
+			total = 0
+		}
+		if total > int64(^uint32(0)>>1) {
+			total = int64(^uint32(0) >> 1)
+		}
+		counts[email] = int32(total)
+	}
+	return counts, nil
 }
 
 func (s *Store) ListMessages(ctx context.Context, email, box, search, sort string, offset, limit int32) ([]MessageSummary, int32, error) {

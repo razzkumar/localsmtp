@@ -57,6 +57,7 @@ func NewServer(cfg config.Config, store *store.Store, authManager *auth.Manager,
 	mux.HandleFunc("/api/login", server.handleLogin)
 	mux.HandleFunc("/api/logout", server.handleLogout)
 	mux.HandleFunc("/api/me", server.handleMe)
+	mux.HandleFunc("/api/accounts", server.handleAccounts)
 	mux.HandleFunc("/api/messages", server.handleMessages)
 	mux.HandleFunc("/api/messages/", server.handleMessage)
 	mux.HandleFunc("/api/stream", server.handleStream)
@@ -169,17 +170,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	current := []string{}
+	if cookie, err := r.Cookie(s.auth.CookieName()); err == nil {
+		if emails, err := s.auth.Parse(cookie.Value, now); err == nil {
+			current = emails
+		}
+	}
 	if err := s.store.UpsertUser(r.Context(), email, now); err != nil {
 		http.Error(w, "unable to save user", http.StatusInternalServerError)
 		return
 	}
-	token, err := s.auth.Issue(email, now)
+	sessionEmails := uniqueEmails(append([]string{email}, current...))
+	token, err := s.auth.IssueEmails(sessionEmails, now)
 	if err != nil {
 		http.Error(w, "unable to create session", http.StatusInternalServerError)
 		return
 	}
 	s.setSessionCookie(w, token, now)
-	s.respondJSON(w, http.StatusOK, map[string]string{"email": email})
+	s.respondJSON(w, http.StatusOK, map[string]any{"email": email, "emails": sessionEmails})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -203,12 +211,37 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	email, err := s.sessionEmail(r)
+	emails, err := s.sessionEmails(r)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.respondJSON(w, http.StatusOK, map[string]string{"email": email})
+	s.respondJSON(w, http.StatusOK, map[string]any{"email": emails[0], "emails": emails})
+}
+
+func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	emails, err := s.sessionEmails(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	counts, err := s.store.UnreadCounts(r.Context(), emails)
+	if err != nil {
+		http.Error(w, "unable to load unread counts", http.StatusInternalServerError)
+		return
+	}
+	accounts := make([]map[string]any, 0, len(emails))
+	for _, email := range emails {
+		accounts = append(accounts, map[string]any{
+			"email":  email,
+			"unread": counts[email],
+		})
+	}
+	s.respondJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +249,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	email, err := s.sessionEmail(r)
+	email, err := s.sessionEmailForRequest(r)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -273,7 +306,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
-	email, err := s.sessionEmail(r)
+	email, err := s.sessionEmailForRequest(r)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -337,6 +370,11 @@ func (s *Server) handleMessageDetail(w http.ResponseWriter, r *http.Request, ema
 		}
 		http.Error(w, "unable to load message", http.StatusInternalServerError)
 		return
+	}
+	if recipientIncludes(recipients, email) {
+		if err := s.store.MarkMessageRead(r.Context(), email, id, time.Now()); err != nil {
+			s.logger.Warn("mark message read", "error", err)
+		}
 	}
 
 	detail := messageDetail{
@@ -423,7 +461,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	email, err := s.sessionEmail(r)
+	emails, err := s.sessionEmails(r)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -437,8 +475,34 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch, unsubscribe := s.hub.Subscribe(email)
-	defer unsubscribe()
+	ctx := r.Context()
+	combined := make(chan []byte, 16)
+	unsubscribers := make([]func(), 0, len(emails))
+	for _, email := range emails {
+		ch, unsubscribe := s.hub.Subscribe(email)
+		unsubscribers = append(unsubscribers, unsubscribe)
+		go func(input <-chan []byte) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case payload, ok := <-input:
+					if !ok {
+						return
+					}
+					select {
+					case combined <- payload:
+					default:
+					}
+				}
+			}
+		}(ch)
+	}
+	defer func() {
+		for _, unsubscribe := range unsubscribers {
+			unsubscribe()
+		}
+	}()
 
 	_, _ = w.Write([]byte("event: ready\ndata: {}\n\n"))
 	flusher.Flush()
@@ -449,10 +513,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case payload, ok := <-ch:
-			if !ok {
-				return
-			}
+		case payload := <-combined:
 			_, _ = w.Write(payload)
 			flusher.Flush()
 		case <-ticker.C:
@@ -467,7 +528,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	email, err := s.sessionEmail(r)
+	email, err := s.sessionEmailForRequest(r)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -500,16 +561,33 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) sessionEmail(r *http.Request) (string, error) {
+func (s *Server) sessionEmails(r *http.Request) ([]string, error) {
 	cookie, err := r.Cookie(s.auth.CookieName())
 	if err != nil {
-		return "", errors.New("missing session")
+		return nil, errors.New("missing session")
 	}
-	email, err := s.auth.Parse(cookie.Value, time.Now())
+	emails, err := s.auth.Parse(cookie.Value, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return emails, nil
+}
+
+func (s *Server) sessionEmailForRequest(r *http.Request) (string, error) {
+	emails, err := s.sessionEmails(r)
 	if err != nil {
 		return "", err
 	}
-	return email, nil
+	requested := strings.TrimSpace(r.URL.Query().Get("email"))
+	if requested == "" {
+		return emails[0], nil
+	}
+	for _, email := range emails {
+		if email == requested {
+			return requested, nil
+		}
+	}
+	return "", errors.New("invalid session email")
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, value string, now time.Time) {
@@ -666,4 +744,29 @@ func sanitizeHeader(value string) string {
 	cleaned := strings.ReplaceAll(value, "\r", "")
 	cleaned = strings.ReplaceAll(cleaned, "\n", "")
 	return strings.TrimSpace(cleaned)
+}
+
+func recipientIncludes(recipients []store.Recipient, email string) bool {
+	for _, recipient := range recipients {
+		if recipient.Email == email {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueEmails(emails []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(emails))
+	for _, email := range emails {
+		if email == "" {
+			continue
+		}
+		if _, ok := seen[email]; ok {
+			continue
+		}
+		seen[email] = struct{}{}
+		result = append(result, email)
+	}
+	return result
 }

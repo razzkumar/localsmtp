@@ -1,5 +1,11 @@
 export type User = {
   email: string;
+  emails: string[];
+};
+
+export type AccountSummary = {
+  email: string;
+  unread: number;
 };
 
 export type MessageSummary = {

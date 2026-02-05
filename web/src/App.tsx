@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   deleteMessage,
+  getAccounts,
   getMessage,
   getMe,
   getRawMessage,
@@ -9,7 +10,7 @@ import {
   logout,
   sendMessage,
 } from "./api";
-import type { MessageDetail, MessageSummary, User } from "./types";
+import type { AccountSummary, MessageDetail, MessageSummary, User } from "./types";
 
 type Box = "inbox" | "sent";
 type ViewMode = "html" | "text" | "raw";
@@ -49,6 +50,8 @@ const smoothScrollOffset = 180;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
+  const [activeEmail, setActiveEmail] = useState<string>("");
   const [box, setBox] = useState<Box>("inbox");
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -69,7 +72,7 @@ export default function App() {
   const [switchOpen, setSwitchOpen] = useState(false);
 
   const resetMessages = useCallback(async () => {
-    if (!user) {
+    if (!user || !activeEmail) {
       return;
     }
     setLoading(true);
@@ -78,7 +81,7 @@ export default function App() {
     pageRef.current = 1;
     shouldScrollRef.current = false;
     try {
-      const response = await listMessages(box, search, 1, pageSize);
+      const response = await listMessages(activeEmail, box, search, 1, pageSize);
       setMessages(response.messages);
       setSelectedId((selected) =>
         selected && response.messages.some((item) => item.id === selected) ? selected : null
@@ -90,16 +93,16 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [box, search, user]);
+  }, [activeEmail, box, search, user]);
 
   const loadMoreMessages = useCallback(async () => {
-    if (!user || !hasMore || loadingMore || loading) {
+    if (!user || !activeEmail || !hasMore || loadingMore || loading) {
       return;
     }
     setLoadingMore(true);
     try {
       const targetPage = pageRef.current + 1;
-      const response = await listMessages(box, search, targetPage, pageSize);
+      const response = await listMessages(activeEmail, box, search, targetPage, pageSize);
       setMessages((current) => [...current, ...response.messages]);
       setHasMore(response.hasMore);
       pageRef.current = response.page;
@@ -109,16 +112,48 @@ export default function App() {
     } finally {
       setLoadingMore(false);
     }
-  }, [box, hasMore, loading, loadingMore, search, user]);
+  }, [activeEmail, box, hasMore, loading, loadingMore, search, user]);
+
+  const refreshAccounts = useCallback(async () => {
+    try {
+      const response = await getAccounts();
+      setAccounts(response.accounts);
+      setUser((current) =>
+        current
+          ? updateUserEmails(current, response.accounts.map((account) => account.email))
+          : current
+      );
+      setActiveEmail((current) => {
+        if (response.accounts.some((account) => account.email === current)) {
+          return current;
+        }
+        return response.accounts[0]?.email ?? "";
+      });
+    } catch {
+      // Ignore background refresh failures.
+    }
+  }, []);
 
   useEffect(() => {
-    getMe().then(setUser).catch(() => setUser(null));
+    getMe()
+      .then((session) => {
+        setUser(session);
+        setActiveEmail(session.email);
+        setAccounts(session.emails.map((email) => ({ email, unread: 0 })));
+      })
+      .catch(() => setUser(null));
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    if (user) {
+      refreshAccounts();
+    }
+  }, [refreshAccounts, user]);
 
   useEffect(() => {
     resetMessages();
@@ -133,33 +168,36 @@ export default function App() {
   }, [messages.length]);
 
   useEffect(() => {
-    if (!selectedId || !user) {
+    if (!selectedId || !user || !activeEmail) {
       setSelectedMessage(emptyMessage);
       setDetailError(null);
       return;
     }
     setSelectedMessage(emptyMessage);
     setDetailError(null);
-    getMessage(selectedId)
+    getMessage(activeEmail, selectedId)
       .then((message) => {
         setSelectedMessage(message);
         setDetailTab(defaultTab(message));
         setRawContent("");
+        if (box === "inbox") {
+          refreshAccounts();
+        }
       })
       .catch((err) => {
         setDetailError(err instanceof Error ? err.message : "Unable to load message");
         setSelectedMessage(emptyMessage);
       });
-  }, [selectedId, user]);
+  }, [activeEmail, box, refreshAccounts, selectedId, user]);
 
   useEffect(() => {
-    if (!selectedId || detailTab !== "raw") {
+    if (!selectedId || detailTab !== "raw" || !activeEmail) {
       return;
     }
-    getRawMessage(selectedId)
+    getRawMessage(activeEmail, selectedId)
       .then(setRawContent)
       .catch((err) => setRawContent(err instanceof Error ? err.message : ""));
-  }, [detailTab, selectedId]);
+  }, [activeEmail, detailTab, selectedId]);
 
   useEffect(() => {
     if (!user) {
@@ -168,13 +206,16 @@ export default function App() {
     const source = new EventSource("/api/stream", { withCredentials: true });
     source.addEventListener("message", () => {
       resetMessages();
+      refreshAccounts();
     });
     return () => source.close();
-  }, [resetMessages, user]);
+  }, [refreshAccounts, resetMessages, user]);
 
   const handleLogin = async (email: string) => {
     const nextUser = await login(email);
     setUser(nextUser);
+    setActiveEmail(nextUser.email);
+    setAccounts(nextUser.emails.map((item) => ({ email: item, unread: 0 })));
     setBox("inbox");
     setMessages([]);
     setSelectedId(null);
@@ -183,6 +224,7 @@ export default function App() {
     pageRef.current = 1;
     shouldScrollRef.current = false;
     setError(null);
+    refreshAccounts();
   };
 
   const handleSwitch = async (email: string) => {
@@ -193,6 +235,8 @@ export default function App() {
   const handleLogout = async () => {
     await logout();
     setUser(null);
+    setAccounts([]);
+    setActiveEmail("");
     setMessages([]);
     setSelectedId(null);
     setHasMore(true);
@@ -201,12 +245,13 @@ export default function App() {
   };
 
   const handleDelete = async () => {
-    if (!selectedId) {
+    if (!selectedId || !activeEmail) {
       return;
     }
-    await deleteMessage(selectedId);
+    await deleteMessage(activeEmail, selectedId);
     setSelectedId(null);
     resetMessages();
+    refreshAccounts();
   };
 
   const handleSend = async (payload: {
@@ -215,6 +260,9 @@ export default function App() {
     text: string;
     html: string;
   }) => {
+    if (!activeEmail) {
+      throw new Error("Select a mailbox before sending.");
+    }
     const recipients = payload.to
       .split(",")
       .map((item) => item.trim())
@@ -225,7 +273,7 @@ export default function App() {
     if (!payload.text.trim() && !payload.html.trim()) {
       throw new Error("Add a text or HTML body.");
     }
-    await sendMessage({
+    await sendMessage(activeEmail, {
       to: recipients,
       subject: payload.subject.trim(),
       text: payload.text,
@@ -241,6 +289,17 @@ export default function App() {
   const formatLongDate = useMemo(() => {
     return (value: string) => longDateFormatter.format(new Date(value));
   }, []);
+
+  const accountItems = useMemo(() => {
+    if (!user) {
+      return [];
+    }
+    const unreadMap = new Map(accounts.map((account) => [account.email, account.unread]));
+    return user.emails.map((email) => ({
+      email,
+      unread: unreadMap.get(email) ?? 0,
+    }));
+  }, [accounts, user]);
 
   const detailLoading = selectedId !== null && selectedMessage.id !== selectedId && !detailError;
 
@@ -263,10 +322,10 @@ export default function App() {
           <div className="topbar-actions">
             <div className="user-pill">
               <span>Signed in as</span>
-              <strong>{user.email}</strong>
+              <strong>{activeEmail || user.email}</strong>
             </div>
             <button className="button ghost" onClick={() => setSwitchOpen(true)}>
-              Switch user
+              Add mailbox
             </button>
             <button className="button ghost" onClick={handleLogout}>
               Sign out
@@ -278,6 +337,45 @@ export default function App() {
         </header>
 
         <div className="content">
+          <aside className="accounts">
+            <div className="accounts-header">
+              <p className="section-title">Mailboxes</p>
+              <p className="subtitle">Active {accountItems.length}</p>
+            </div>
+            <div className="accounts-body">
+              {accountItems.length === 0 ? (
+                <div className="state">No mailboxes yet.</div>
+              ) : (
+                <ul className="account-list">
+                  {accountItems.map((account) => (
+                    <li key={account.email}>
+                      <button
+                        className={`account-item ${
+                          activeEmail === account.email ? "active" : ""
+                        }`}
+                        onClick={() => {
+                          setActiveEmail(account.email);
+                          setSelectedId(null);
+                          setMessages([]);
+                          setHasMore(true);
+                          pageRef.current = 1;
+                          shouldScrollRef.current = false;
+                        }}
+                      >
+                        <div>
+                          <p>{account.email}</p>
+                          <span>Inbox</span>
+                        </div>
+                        {account.unread > 0 && (
+                          <span className="badge">{account.unread}</span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </aside>
           <aside className="panel">
             <div className="panel-header">
               <div className="tab-group">
@@ -458,7 +556,9 @@ export default function App() {
                         <a
                           key={attachment.id}
                           className="attachment"
-                          href={`/api/messages/${selectedMessage.id}/attachments/${attachment.id}`}
+                          href={`/api/messages/${selectedMessage.id}/attachments/${attachment.id}?email=${encodeURIComponent(
+                            activeEmail || user.email
+                          )}`}
                         >
                           <div>
                             <p>{attachment.filename}</p>
@@ -480,13 +580,13 @@ export default function App() {
 
       <ComposeDrawer
         open={composeOpen}
-        from={user.email}
+        from={activeEmail || user.email}
         onClose={() => setComposeOpen(false)}
         onSend={handleSend}
       />
       <SwitchUserModal
         open={switchOpen}
-        current={user.email}
+        current={activeEmail || user.email}
         onClose={() => setSwitchOpen(false)}
         onSwitch={handleSwitch}
       />
@@ -513,6 +613,31 @@ function formatBytes(size: number): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function updateUserEmails(user: User, nextEmails: string[]): User {
+  if (arraysEqual(user.emails, nextEmails)) {
+    return user;
+  }
+  return {
+    ...user,
+    emails: nextEmails,
+  };
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function LoginScreen({ onLogin }: { onLogin: (email: string) => Promise<void> }) {
@@ -717,12 +842,12 @@ function SwitchUserModal({
     <div className="overlay">
       <div className="modal">
         <div className="modal-header">
-          <p className="drawer-title">Switch mailbox</p>
-          <p className="drawer-subtitle">Use any email to view its inbox.</p>
+          <p className="drawer-title">Add mailbox</p>
+          <p className="drawer-subtitle">Add another email and switch anytime.</p>
         </div>
         <form className="drawer-form" onSubmit={handleSubmit}>
           <div className="field">
-            <label>New email</label>
+            <label>Mailbox email</label>
             <input
               type="text"
               inputMode="email"
@@ -738,7 +863,7 @@ function SwitchUserModal({
               Cancel
             </button>
             <button className="button primary" type="submit" disabled={loading}>
-              {loading ? "Switching..." : "Switch user"}
+              {loading ? "Adding..." : "Add mailbox"}
             </button>
           </div>
         </form>
