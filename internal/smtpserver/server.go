@@ -291,8 +291,15 @@ func messageAudience(message store.Message, recipients []store.Recipient) []stri
 
 func buildEvent(message store.Message, recipients []store.Recipient) []byte {
 	toList := []string{}
+	ccList := []string{}
+	bccList := []string{}
 	for _, recipient := range recipients {
-		if recipient.Type == "to" {
+		switch recipient.Type {
+		case "cc":
+			ccList = append(ccList, recipient.Email)
+		case "bcc":
+			bccList = append(bccList, recipient.Email)
+		default:
 			toList = append(toList, recipient.Email)
 		}
 	}
@@ -300,6 +307,8 @@ func buildEvent(message store.Message, recipients []store.Recipient) []byte {
 		"id":        message.ID,
 		"from":      message.From,
 		"to":        toList,
+		"cc":        ccList,
+		"bcc":       bccList,
 		"createdAt": message.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(payload)

@@ -42,42 +42,50 @@ func (m *Manager) MaxAge() time.Duration {
 }
 
 func (m *Manager) Issue(email string, now time.Time) (string, error) {
-	normalized, err := NormalizeEmail(email)
+	return m.IssueEmails([]string{email}, now)
+}
+
+func (m *Manager) IssueEmails(emails []string, now time.Time) (string, error) {
+	normalized, err := normalizeEmailList(emails)
 	if err != nil {
 		return "", err
 	}
 	timestamp := strconv.FormatInt(now.Unix(), 10)
-	payload := normalized + "|" + timestamp
+	payload := strings.Join(normalized, ",") + "|" + timestamp
 	sig := m.sign(payload)
 	token := payload + "|" + sig
 	return base64.RawURLEncoding.EncodeToString([]byte(token)), nil
 }
 
-func (m *Manager) Parse(token string, now time.Time) (string, error) {
+func (m *Manager) Parse(token string, now time.Time) ([]string, error) {
 	if token == "" {
-		return "", errors.New("missing session token")
+		return nil, errors.New("missing session token")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return "", errors.New("invalid session token")
+		return nil, errors.New("invalid session token")
 	}
 	parts := strings.Split(string(raw), "|")
 	if len(parts) != 3 {
-		return "", errors.New("invalid session token")
+		return nil, errors.New("invalid session token")
 	}
 	payload := parts[0] + "|" + parts[1]
 	if !m.verify(payload, parts[2]) {
-		return "", errors.New("invalid session token")
+		return nil, errors.New("invalid session token")
 	}
 	timestamp, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return "", errors.New("invalid session token")
+		return nil, errors.New("invalid session token")
 	}
 	issuedAt := time.Unix(timestamp, 0)
 	if now.Sub(issuedAt) > m.maxAge {
-		return "", errors.New("session expired")
+		return nil, errors.New("session expired")
 	}
-	return parts[0], nil
+	emails, err := normalizeEmailList(strings.Split(parts[0], ","))
+	if err != nil {
+		return nil, err
+	}
+	return emails, nil
 }
 
 func NormalizeEmail(email string) (string, error) {
@@ -90,6 +98,26 @@ func NormalizeEmail(email string) (string, error) {
 		return "", errors.New("email must be valid")
 	}
 	return strings.ToLower(addr.Address), nil
+}
+
+func normalizeEmailList(emails []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(emails))
+	for _, email := range emails {
+		normalized, err := NormalizeEmail(email)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, normalized)
+	}
+	if len(result) == 0 {
+		return nil, errors.New("email is required")
+	}
+	return result, nil
 }
 
 func (m *Manager) sign(payload string) string {

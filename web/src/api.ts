@@ -1,4 +1,4 @@
-import type { MessageDetail, MessageSummary, User } from "./types";
+import type { AccountSummary, MessageDetail, MessageSummary, User } from "./types";
 
 type MessageListResponse = {
   messages: MessageSummary[];
@@ -48,13 +48,19 @@ export async function logout(): Promise<void> {
   await request<void>("/api/logout", { method: "POST" });
 }
 
+export async function getAccounts(): Promise<{ accounts: AccountSummary[] }> {
+  return request<{ accounts: AccountSummary[] }>("/api/accounts");
+}
+
 export async function listMessages(
+  email: string,
   box: string,
   search: string,
   page: number,
   limit: number
 ): Promise<MessageListResponse> {
   const params = new URLSearchParams();
+  params.set("email", email);
   params.set("box", box);
   if (search) {
     params.set("search", search);
@@ -64,16 +70,20 @@ export async function listMessages(
   return request<MessageListResponse>(`/api/messages?${params.toString()}`);
 }
 
-export async function getMessage(id: string): Promise<MessageDetail> {
-  return request<MessageDetail>(`/api/messages/${id}`);
+export async function getMessage(email: string, id: string): Promise<MessageDetail> {
+  return request<MessageDetail>(`/api/messages/${id}?email=${encodeURIComponent(email)}`);
 }
 
-export async function deleteMessage(id: string): Promise<void> {
-  await request<void>(`/api/messages/${id}`, { method: "DELETE" });
+export async function deleteMessage(email: string, id: string): Promise<void> {
+  await request<void>(`/api/messages/${id}?email=${encodeURIComponent(email)}`, {
+    method: "DELETE",
+  });
 }
 
-export async function getRawMessage(id: string): Promise<string> {
-  const response = await fetch(`/api/messages/${id}/raw`, { credentials: "include" });
+export async function getRawMessage(email: string, id: string): Promise<string> {
+  const response = await fetch(`/api/messages/${id}/raw?email=${encodeURIComponent(email)}`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || response.statusText);
@@ -81,13 +91,16 @@ export async function getRawMessage(id: string): Promise<string> {
   return response.text();
 }
 
-export async function sendMessage(payload: {
-  to: string[];
-  subject: string;
-  text: string;
-  html: string;
-}): Promise<void> {
-  await request<void>("/api/send", {
+export async function sendMessage(
+  email: string,
+  payload: {
+    to: string[];
+    subject: string;
+    text: string;
+    html: string;
+  }
+): Promise<void> {
+  await request<void>(`/api/send?email=${encodeURIComponent(email)}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

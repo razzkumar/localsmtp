@@ -164,9 +164,85 @@ textarea {
 
 .content {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 220px 360px minmax(0, 1fr);
   min-height: 0;
   flex: 1;
+}
+
+.accounts {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.accounts-header {
+  padding: 20px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.accounts-header .subtitle {
+  margin: 4px 0 0;
+}
+
+.accounts-body {
+  padding: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.account-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 16px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  box-shadow: var(--panel-shadow);
+}
+
+.account-item p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.account-item span {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.account-item.active {
+  border-color: rgba(38, 110, 121, 0.35);
+  background: #fff;
+}
+
+.badge {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(192, 103, 53, 0.2);
+  color: #8a3f1f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .panel {
@@ -559,6 +635,11 @@ textarea {
 @media (max-width: 960px) {
   .content {
     grid-template-columns: 1fr;
+  }
+
+  .accounts {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
 
   .panel {
