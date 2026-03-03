@@ -553,7 +553,12 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	raw := buildOutboundMessage(email, recipients, subject, textBody, htmlBody)
-	if err := smtp.SendMail(s.smtpAddr, nil, email, recipients, raw); err != nil {
+	var auth smtp.Auth
+	if s.cfg.SMTPAuthEnabled {
+		host, _, _ := strings.Cut(s.smtpAddr, ":")
+		auth = smtp.PlainAuth("", s.cfg.SMTPUsername, s.cfg.SMTPPassword, host)
+	}
+	if err := smtp.SendMail(s.smtpAddr, auth, email, recipients, raw); err != nil {
 		s.logger.Error("send mail", "error", err)
 		http.Error(w, "unable to send mail", http.StatusBadRequest)
 		return
